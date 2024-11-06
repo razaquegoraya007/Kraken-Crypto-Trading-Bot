@@ -8,16 +8,28 @@ def load_config():
         config = yaml.safe_load(file)
     return config
 
-def check_endpoint():
+def print_demo_symbols():
     config = load_config()
+
+    # Initialize Kraken futures instance with demo environment URLs
     kraken_futures = ccxt.krakenfutures({
         'apiKey': config['kraken']['api_key'],
         'secret': config['kraken']['api_secret'],
+        'urls': {
+            'api': {
+                'public': 'https://demo-futures.kraken.com/derivatives/api/',
+                'private': 'https://demo-futures.kraken.com/derivatives/api/',
+            }
+        }
     })
 
-    # Print the API URLs for Kraken Futures
-    print("Kraken Futures API URLs:")
-    print(kraken_futures.urls)
+    try:
+        markets = kraken_futures.load_markets()
+        print("Available symbols on Kraken Futures Demo:")
+        for symbol in markets:
+            print(symbol)
+    except Exception as e:
+        print(f"Error fetching symbols from Kraken Futures Demo: {e}")
 
 if __name__ == "__main__":
-    check_endpoint()
+    print_demo_symbols()
