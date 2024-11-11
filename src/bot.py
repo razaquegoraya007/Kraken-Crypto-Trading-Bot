@@ -11,41 +11,64 @@ import matplotlib.pyplot as plt
 trade_log = []
 last_trade = None  # Track the last trade for PnL calculation
 
-def execute_trade(order_type, amount, config, current_price):
+def execute_trade(order_type, amount_usd, config, current_price):
     """Execute a live trade or simulate based on config."""
     kraken_futures = ccxt.krakenfutures({
         'apiKey': config['kraken']['api_key'],
         'secret': config['kraken']['api_secret']
     })
 
+    # Convert USD amount to asset amount
+    amount_asset = amount_usd / current_price
+    min_trade_amount = 1  # Check Kraken's documentation for the exact minimum value
+
+    # Ensure the amount is greater than minimum precision
+    if amount_asset < min_trade_amount:
+        print(f"[ERROR] Amount of {amount_asset} is less than the minimum required {min_trade_amount}. Adjusting amount...")
+        amount_asset = min_trade_amount
+
     # Check simulation mode
-    if config.get('simulation_mode', 'true') == 'true':
-        print(f"[SIMULATION] {order_type} order for ${amount} at {current_price}")
-        log_trade(order_type, amount, current_price)
+    if config.get('simulation_mode', True):
+        print(f"Simulating {order_type} order for {amount_asset} units at {current_price}")
+        log_trade(order_type, amount_asset, current_price)
     else:
         try:
             order_type_ccxt = 'market'
-            # Corrected symbol based on Kraken's requirements
             symbol = config['trade_parameters']['symbol']
+            take_profit = config['trade_parameters']['take_profit']
+            trailing_stop_loss = config['trade_parameters']['trailing_stop_loss']
 
-            # Debugging: Detailed print statements
-            print(f"[DEBUG] Attempting to place {order_type} order...")
+            print("[DEBUG] Attempting to place SELL order...")
             print(f"[DEBUG] Symbol: {symbol}")
-            print(f"[DEBUG] Order Type: {order_type_ccxt}")
-            print(f"[DEBUG] Amount: {amount}")
+            print(f"[DEBUG] Order type: {order_type_ccxt}")
+            print(f"[DEBUG] Amount: {amount_asset}")
             print(f"[DEBUG] Current Price: {current_price}")
 
-            # Creating order
+            # Place the market order
             order = kraken_futures.create_order(
                 symbol=symbol,
                 type=order_type_ccxt,
                 side=order_type.lower(),
-                amount=amount
+                amount=amount_asset
             )
-            print(f"[SUCCESS] Live {order_type} order placed: {order}")
-            log_trade(order_type, amount, current_price, order)
+            print(f"Live {order_type} order placed: {order}")
+
+            # Place take profit and stop loss orders if needed
+            if take_profit:
+                take_profit_price = current_price * take_profit if order_type == "BUY" else current_price / take_profit
+                print(f"[DEBUG] Setting Take Profit at {take_profit_price}")
+                # Place take profit order here using Kraken API
+
+            if trailing_stop_loss:
+                stop_loss_price = current_price * (1 - trailing_stop_loss) if order_type == "BUY" else current_price * (1 + trailing_stop_loss)
+                print(f"[DEBUG] Setting Stop Loss at {stop_loss_price}")
+                # Place stop loss order here using Kraken API
+
+            log_trade(order_type, amount_asset, current_price, order)
         except Exception as e:
             print(f"[ERROR] Error placing {order_type} order: {e}")
+
+
 
 def log_trade(order_type, amount, price, order=None):
     """Log the trade details and calculate PnL for summary plotting."""
@@ -59,20 +82,26 @@ def log_trade(order_type, amount, price, order=None):
         "PnL": 0  # Default PnL value
     }
 
-    if last_trade and last_trade["order_type"] != order_type:
-        if order_type == "SELL":
+    if last_trade:
+        # Calculate PnL based on trade direction
+        if last_trade["order_type"] == "BUY" and order_type == "SELL":
+            # Profit = (Sell Price - Buy Price) * Amount
             trade_data["PnL"] = (price - last_trade["price"]) * amount
-        elif order_type == "BUY":
+        elif last_trade["order_type"] == "SELL" and order_type == "BUY":
+            # Profit = (Buy Price - Sell Price) * Amount
             trade_data["PnL"] = (last_trade["price"] - price) * amount
 
         print(f"[TRADE] {order_type} at {price} with amount {amount}. PnL for this trade: {trade_data['PnL']:.2f}")
 
+    # Update the last trade details
     last_trade = trade_data
     trade_log.append(trade_data)
 
+    # Calculate cumulative PnL
     cumulative_PnL = sum(trade["PnL"] for trade in trade_log)
     print(f"[SUMMARY] Cumulative PnL after trade: {cumulative_PnL:.2f}")
 
+    # Log order details if it's a live order
     if order:
         print("\n=== Live Order Details ===")
         print(f"Order Type: {order_type}")
@@ -100,12 +129,19 @@ def log_trade(order_type, amount, price, order=None):
         print(f"Fees: {order.get('fees', 'None')}")
         print("=== End of Order Details ===\n")
 
+    # Save the trade log to a CSV file
     log_path = os.path.join(os.path.dirname(__file__), '../logs/trade_log.csv')
     df = pd.DataFrame([trade_data])
     df.to_csv(log_path, mode='a', header=not os.path.exists(log_path), index=False)
 
+
+
 def plot_trade_summary():
     """Plot cumulative PnL over time for a summary of trading performance."""
+    if not trade_log:
+        print("[ERROR] No PnL data available to plot.")
+        return
+
     df = pd.DataFrame(trade_log)
     df['cumulative_PnL'] = df['PnL'].cumsum()
 
