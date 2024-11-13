@@ -61,6 +61,6 @@ time               , order_type, amount, price,          ,
 2024-11-11 20:28:27, SELL      , 1     , 513  , executed , 0
 2024-11-11 20:28:33, SELL      , 1     , 513  , executed , 0
 2024-11-11 20:28:39, SELL      , 1     , 513  , executed , 0
-2024-11-11 20:35:45,SELL,1,513,executed,0
-2024-11-11 20:35:51,SELL,1,513,executed,0
-2024-11-11 20:35:57,SELL,1,513,executed,0
+2024-11-11 20:35:45, SELL      , 1     , 513  , executed , 0
+2024-11-11 20:35:51, SELL      , 1     , 513  , executed , 0
+2024-11-11 20:35:57, SELL      , 1     , 513  , executed , 0
