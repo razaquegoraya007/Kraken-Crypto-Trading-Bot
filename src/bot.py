@@ -2,14 +2,31 @@ import ccxt
 import pandas as pd
 import time
 from datetime import datetime
+import os
 
 # Load your configuration
 from utils import load_config
 from indicators import calculate_vwap, calculate_ema
 
+# Initialize ccxt Kraken Futures
+kraken_futures = ccxt.krakenfutures()
+
 # Track cumulative profit and log each trade
 trade_log = []
 last_trade = None
+
+def fetch_live_data(symbol, limit=20):
+    """Fetch live market data from Kraken and format it as a DataFrame."""
+    try:
+        # Fetch OHLCV data: [timestamp, open, high, low, close, volume]
+        ohlcv = kraken_futures.fetch_ohlcv(symbol, timeframe='1m', limit=limit)
+
+        # Convert the OHLCV data into a DataFrame
+        data = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        return data
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch live data: {e}")
+        return pd.DataFrame()  # Return an empty DataFrame on error
 
 def calculate_tp_sl(order_type, current_price):
     """Calculate Take Profit and Stop Loss prices within reasonable bounds."""
@@ -27,10 +44,8 @@ def calculate_tp_sl(order_type, current_price):
 
 def execute_trade(order_type, amount, config, current_price):
     """Execute a live trade with adjusted TP, SL, and a limit price."""
-    kraken_futures = ccxt.krakenfutures({
-        'apiKey': config['kraken']['api_key'],
-        'secret': config['kraken']['api_secret']
-    })
+    kraken_futures.apiKey = config['kraken']['api_key']
+    kraken_futures.secret = config['kraken']['api_secret']
 
     try:
         # Calculate Take Profit and Stop Loss prices
@@ -105,11 +120,11 @@ def main():
     config = load_config()
     open_orders_today = 0
 
-    # Load your live data here
-    data = pd.DataFrame({
-        "close": [500, 502, 499, 501, 503, 505, 498, 497, 510, 507, 509, 506, 500, 495, 492, 500, 502, 510, 511, 513],
-        "volume": [100, 110, 95, 105, 102, 98, 97, 100, 105, 110, 95, 101, 104, 99, 107, 108, 103, 106, 109, 111]
-    })
+    # Fetch live data
+    data = fetch_live_data(config['trade_parameters']['symbol'])
+    if data.empty:
+        print("[ERROR] No data fetched. Exiting...")
+        return
 
     # Trading loop
     while len(trade_log) < config['trade_parameters']['max_orders_per_day']:
