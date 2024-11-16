@@ -2,7 +2,6 @@ import ccxt
 import pandas as pd
 import time
 from datetime import datetime
-import os
 
 # Load your configuration
 from utils import load_config
@@ -18,20 +17,17 @@ last_trade = None
 def fetch_live_data(symbol, limit=20):
     """Fetch live market data from Kraken and format it as a DataFrame."""
     try:
-        # Fetch OHLCV data: [timestamp, open, high, low, close, volume]
         ohlcv = kraken_futures.fetch_ohlcv(symbol, timeframe='1m', limit=limit)
-
-        # Convert the OHLCV data into a DataFrame
         data = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
         return data
     except Exception as e:
         print(f"[ERROR] Failed to fetch live data: {e}")
-        return pd.DataFrame()  # Return an empty DataFrame on error
+        return pd.DataFrame()
 
 def calculate_tp_sl(order_type, current_price):
-    """Calculate Take Profit and Stop Loss prices within reasonable bounds."""
-    tp_percentage = 0.01  # 1% for Take Profit
-    sl_percentage = 0.01  # 1% for Stop Loss
+    """Calculate Take Profit and Stop Loss prices."""
+    tp_percentage = 0.01  # 1% Take Profit
+    sl_percentage = 0.01  # 1% Stop Loss
 
     if order_type == "SELL":
         take_profit_price = current_price * (1 - tp_percentage)
@@ -40,7 +36,7 @@ def calculate_tp_sl(order_type, current_price):
         take_profit_price = current_price * (1 + tp_percentage)
         stop_loss_price = current_price * (1 - sl_percentage)
 
-    return round(take_profit_price, 2), round(stop_loss_price, 2)
+    return round(take_profit_price, 5), round(stop_loss_price, 5)
 
 def execute_trade(order_type, amount, config, current_price):
     """Execute a live trade with adjusted TP, SL, and a limit price."""
@@ -48,26 +44,36 @@ def execute_trade(order_type, amount, config, current_price):
     kraken_futures.secret = config['kraken']['api_secret']
 
     try:
-        # Calculate Take Profit and Stop Loss prices
         take_profit_price, stop_loss_price = calculate_tp_sl(order_type, current_price)
-        limit_price = current_price * (0.99 if order_type == "SELL" else 1.01)  # Slightly favorable limit price
+        limit_price = round(current_price * (0.99 if order_type == "SELL" else 1.01), 5)  # Adjusted for precision
 
         print(f"[DEBUG] Setting Take Profit at {take_profit_price}")
         print(f"[DEBUG] Setting Stop Loss at {stop_loss_price}")
         print(f"[DEBUG] Setting Limit Price at {limit_price}")
 
-        # Place the order with Kraken Futures
+        # Place the order with correct parameters
         order = kraken_futures.create_order(
             symbol=config['trade_parameters']['symbol'],
-            type="limit",
+            type="limit",  # Check if this should be 'limit' or another type
             side=order_type.lower(),
             amount=amount,
-            price=limit_price,  # Set the limit price
-            params={
-                'stopLossPrice': stop_loss_price,
-                'takeProfitPrice': take_profit_price,
-                'reduceOnly': False
-            }
+            price=limit_price
+        )
+
+        # Place separate Stop Loss and Take Profit orders if needed
+        kraken_futures.create_order(
+            symbol=config['trade_parameters']['symbol'],
+            type="stop-loss",  # Correct order type
+            side="sell" if order_type == "BUY" else "buy",
+            amount=amount,
+            price=stop_loss_price
+        )
+        kraken_futures.create_order(
+            symbol=config['trade_parameters']['symbol'],
+            type="take-profit",  # Correct order type
+            side="sell" if order_type == "BUY" else "buy",
+            amount=amount,
+            price=take_profit_price
         )
 
         print("Live", order_type, "order placed:", order)
@@ -76,7 +82,6 @@ def execute_trade(order_type, amount, config, current_price):
         print(f"[ERROR] Error placing {order_type} order: {e}")
 
 def log_trade(order_type, amount, price, order=None):
-    """Log the trade details and calculate PnL for summary plotting."""
     global last_trade
     trade_data = {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -84,10 +89,9 @@ def log_trade(order_type, amount, price, order=None):
         "amount": amount,
         "price": price,
         "status": "executed" if order else "simulated",
-        "PnL": 0  # Default PnL value
+        "PnL": 0
     }
 
-    # Calculate PnL
     if last_trade and last_trade["order_type"] != order_type:
         if order_type == "SELL":
             trade_data["PnL"] = (price - last_trade["price"]) * amount
@@ -101,7 +105,6 @@ def log_trade(order_type, amount, price, order=None):
     cumulative_PnL = sum(trade["PnL"] for trade in trade_log)
     print(f"[SUMMARY] Cumulative PnL: {cumulative_PnL:.2f}")
 
-    # Log order details
     if order:
         print("\n=== Live Order Details ===")
         print(f"Order Type: {order_type}")
@@ -118,16 +121,14 @@ def log_trade(order_type, amount, price, order=None):
 
 def main():
     config = load_config()
-    open_orders_today = 0
 
-    # Fetch live data
-    data = fetch_live_data(config['trade_parameters']['symbol'])
-    if data.empty:
-        print("[ERROR] No data fetched. Exiting...")
-        return
-
-    # Trading loop
     while len(trade_log) < config['trade_parameters']['max_orders_per_day']:
+        data = fetch_live_data(config['trade_parameters']['symbol'])
+        if data.empty:
+            print("[ERROR] No data fetched. Retrying...")
+            time.sleep(60)
+            continue
+
         vwap = calculate_vwap(data)
         ema_200 = calculate_ema(data, period=200)
         ema_20 = calculate_ema(data, period=20)
@@ -136,16 +137,14 @@ def main():
         print(f"\n[MARKET STATUS] Current Price: {current_price}")
         print(f"VWAP: {vwap.iloc[-1]}, EMA 200: {ema_200.iloc[-1]}, EMA 20: {ema_20.iloc[-1]}")
 
-        if vwap.iloc[-1] >= ema_200.iloc[-1] and vwap.iloc[-1] <= (ema_200.iloc[-1] * 1.02):
+        if (vwap.iloc[-1] >= ema_200.iloc[-1] and ema_200.iloc[-1] >= ema_20.iloc[-1] and vwap.iloc[-1] <= (ema_200.iloc[-1] * 1.015) and ema_200.iloc[-1] <= (ema_20.iloc[-1] * 1.04)):
             print("SELL condition met, executing sell order...")
             execute_trade("SELL", config['trade_parameters']['order_amount'], config, current_price)
-            open_orders_today += 1
-        elif ema_20.iloc[-1] >= ema_200.iloc[-1] and ema_20.iloc[-1] <= (ema_200.iloc[-1] * 1.02):
+        elif (ema_20.iloc[-1] >= ema_200.iloc[-1] and ema_200.iloc[-1] >= vwap.iloc[-1] and ema_20.iloc[-1] <= (ema_200.iloc[-1] * 1.006) and ema_200.iloc[-1] <= (vwap.iloc[-1] * 1.01)):
             print("BUY condition met, executing buy order...")
             execute_trade("BUY", config['trade_parameters']['order_amount'], config, current_price)
-            open_orders_today += 1
 
-        time.sleep(5)
+        time.sleep(60)  # Check every 60 seconds
 
 if __name__ == "__main__":
     main()
