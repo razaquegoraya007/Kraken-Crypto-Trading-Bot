@@ -51,26 +51,26 @@ def execute_trade(order_type, amount, config, current_price):
         print(f"[DEBUG] Setting Stop Loss at {stop_loss_price}")
         print(f"[DEBUG] Setting Limit Price at {limit_price}")
 
-        # Place the order with correct parameters
+        # Place the main order
         order = kraken_futures.create_order(
             symbol=config['trade_parameters']['symbol'],
-            type="limit",  # Check if this should be 'limit' or another type
+            type="limit",  # Adjust order type if necessary
             side=order_type.lower(),
             amount=amount,
             price=limit_price
         )
 
-        # Place separate Stop Loss and Take Profit orders if needed
+        # Place separate Stop Loss and Take Profit orders
         kraken_futures.create_order(
             symbol=config['trade_parameters']['symbol'],
-            type="stop-loss",  # Correct order type
+            type="stop-loss",
             side="sell" if order_type == "BUY" else "buy",
             amount=amount,
             price=stop_loss_price
         )
         kraken_futures.create_order(
             symbol=config['trade_parameters']['symbol'],
-            type="take-profit",  # Correct order type
+            type="take-profit",
             side="sell" if order_type == "BUY" else "buy",
             amount=amount,
             price=take_profit_price
